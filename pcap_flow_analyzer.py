@@ -3,6 +3,7 @@ import pyshark
 from scapy.all import *
 import re
 from datetime import datetime
+from pathlib import Path
 
 # as input, a number that tracks the amount of time this script is called - should be four 
 def get_user_input():
@@ -129,21 +130,24 @@ def checksequence(filtered_packets):
     seq_nums = [] # list holds tuples ((seq_num1,arrival_time1),(seq_num2,arrival_time2),...)
     count = 0
     for packet in filtered_packets:
-        # check if each packet has data length 57
-        if not (int(packet.data.data_len) == 57):
-            print(int(packet.data.data_len))
-            exit(f"Error: packet length is {int(packet.data.data_len)} should be 57")
-            
-        # extract sequence number from packet and time of arrival UTC - put in tuple and append to list
-        else:
-            hex_str = str(packet.data.data)
-            arrival_time = str(packet.frame.time_utc)[:-7]
-            utc_time = datetime.strptime(arrival_time, "%b %d, %Y %H:%M:%S.%f")
-            seq_num = int(hex_str[10:12], 16)
-            seq_nums.append((seq_num, utc_time))
-        #    print(f"seq_num: {seq_num} arrival_time: {utc_time}")     
-
-   # print(seq_nums)
+        try:
+            # check if each packet has data length 57
+            if not (int(packet.data.data_len) == 57):
+                print(int(packet.data.data_len))
+                exit(f"Error: packet length is {int(packet.data.data_len)} should be 57")
+                
+            # extract sequence number from packet and time of arrival UTC - put in tuple and append to list
+            else:
+                hex_str = str(packet.data.data)
+                arrival_time = str(packet.frame.time_utc)[:-7]
+                utc_time = datetime.strptime(arrival_time, "%b %d, %Y %H:%M:%S.%f")
+                seq_num = int(hex_str[10:12], 16)
+                seq_nums.append((seq_num, utc_time))
+        #        print(f"seq_num: {seq_num} arrival_time: {utc_time}")     
+        except AttributeError:
+            print(f"Warning: Packet {packet.frame.number} does not have the required attributes (maybe no data field) and thus was skipped.")
+            continue
+ #   print(seq_nums)
     return seq_nums # return list of tuples (seq_num, arrival_time)
 
 def check_seq_order(seq_nums, stream):
@@ -166,20 +170,27 @@ def check_seq_order(seq_nums, stream):
     """
     ''' Check if the sequence numbers are in order and print the result.\
         Input: list of tuples (seq_num, arrival_time)'''
+    seq_nums = sorted(seq_nums, key=lambda x: x[1])
     sequences = [seq for seq,_ in seq_nums]
-    
+    print(sequences)
+    issorted = True
     # check if sequence numbers are in order 
-    if all (x <= y for x,y in zip(sequences, sequences[1:])):
-        print(f"all in order in the stream: {stream}")
-    else:
         # Print one message per violation
-        for (prev_seq, prev_time), (curr_seq, curr_time) in zip(seq_nums, seq_nums[1:]):
-            if curr_seq < prev_seq:
-                print(
-                    f"Packet with seq num {curr_seq} arrived out of sequence "
-                    f"in the {stream} stream at time {curr_time}"
-                )
-    return 0
+    for (prev_seq, prev_time), (curr_seq, curr_time) in zip(seq_nums, seq_nums[1:]):
+        if not(curr_seq == prev_seq + 1):
+            if (curr_seq == 0):
+                continue
+            if (prev_seq == 0 and curr_seq == 2):
+            #    print(f"missing data field in previous packet")
+                continue
+            issorted = False
+            print(
+                f"Packet with seq num {curr_seq} arrived out of sequence "
+                f"in the {stream} stream at time {curr_time}"
+            )
+    if issorted:
+        print(f"all in order in the stream: {stream}")        
+    return issorted
 
 
 def filter_per_stream(filepath, ue_ip, server_ip, pdi_nw_name_value, fwd_nw_name_value, direction):
@@ -204,9 +215,15 @@ def filter_per_stream(filepath, ue_ip, server_ip, pdi_nw_name_value, fwd_nw_name
 if __name__ == "__main__":
     # These are the UE, SERVER IPs I used to test on
     UE_SERVER_IPS = ["44.236.4.33","25.62.224.209"]
+    # 25.62.217.23
+    # 44.232.52.182   25.62.224.209
+    # 52.89.177.221   25.62.224.209
+    # UETRACE_20250415_172731_UP-payload_eric-pc-up-data-plane-76cdc7548c-8slfs_9383jenkins_3.pcapng
+    # UETRACE_20250415_173914_UP-payload_eric-pc-up-data-plane-76cdc7548c-8slfs_9383jenkins_4.pcapng
 
     # Get user input for the pcap file path and other parameters
     filepath, ue_ip, server_ip = get_user_input()
+    
 
     # Run our main function 4 times, one for each stream so packets are divided into 4 streams 
     for i in range(4):
